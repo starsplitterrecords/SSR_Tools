@@ -1,0 +1,65 @@
+# ------------------------
+# Python venvs
+# ------------------------
+venv/
+.venv/
+env/
+ENV/
+venv311/
+*/venv/
+*/.venv/
+
+# ------------------------
+# Python build + cache
+# ------------------------
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pkl
+*.log
+
+# C extensions
+*.so
+*.dll
+*.dylib
+
+# ------------------------
+# Editor / IDE
+# ------------------------
+.vscode/
+.idea/
+*.code-workspace
+
+# ------------------------
+# OS junk
+# ------------------------
+.DS_Store
+Thumbs.db
+
+# ------------------------
+# Local database files
+# ------------------------
+aliases.db
+catalog.db
+data/db/*.db
+
+# ------------------------
+# Your repository dump files
+# ------------------------
+code_dumps/
+dumps/
+*.txt~    # temp edits
+
+# ------------------------
+# Temporary work files
+# ------------------------
+*.tmp
+*.temp
+*.swp
+*.swo
+
+# ------------------------
+# Virtualenv-based FFmpeg binaries (if present)
+# ------------------------
+helpers/bin/

@@ -1,0 +1,5 @@
+assets_root_path: ''
+auto_refresh_router: true
+preview_mode: true
+refresh_interval_seconds: 60
+router_inbox_path: C:\Users\jeffh\Documents\Star Splitter Records\router_inbox
