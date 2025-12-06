@@ -19,7 +19,12 @@ from gui.dialogs.settings_dialog import SettingsDialog
 
 class MainWindow:
     """
-    Main application window (Tkinter).
+    Main application window for SSR Tools v8 (Tkinter).
+    Handles:
+      - top bar
+      - sidebar navigation
+      - tab switching
+      - initialization of AppState + EventBus
     """
 
     def __init__(self, root: tk.Tk):
@@ -36,6 +41,7 @@ class MainWindow:
     # ------------------------------------------------------------------
 
     def _build_layout(self) -> None:
+        # Root grid
         self.root.rowconfigure(1, weight=1)
         self.root.columnconfigure(1, weight=1)
 
@@ -46,34 +52,24 @@ class MainWindow:
 
         title_lbl = tk.Label(
             bar,
-            text="SSR Tools",
+            text="SSR Tools v8",
             bg="#303030",
             fg="#ffffff",
             font=("Segoe UI", 14, "bold"),
         )
-        title_lbl.pack(side="left", padx=10, pady=5)
+        title_lbl.pack(side="left", padx=10)
 
-        btn_settings = tk.Button(
-            bar,
-            text="Settings",
-            command=self._open_settings,
+        tk.Button(bar, text="Settings", command=self._open_settings).pack(
+            side="right", padx=6
         )
-        btn_settings.pack(side="right", padx=5, pady=5)
-
-        btn_new = tk.Button(
-            bar,
-            text="New Work",
-            command=self._open_new_work,
+        tk.Button(bar, text="New Work", command=self._open_new_work).pack(
+            side="right", padx=6
         )
-        btn_new.pack(side="right", padx=5, pady=5)
 
         # Sidebar
         sidebar = tk.Frame(self.root, bg="#252525", width=200)
         sidebar.grid(row=1, column=0, sticky="nsew")
         sidebar.grid_propagate(False)
-
-        self.root.rowconfigure(1, weight=1)
-        self.root.columnconfigure(0, weight=0)
 
         buttons = [
             ("Catalog", "catalog"),
@@ -93,7 +89,7 @@ class MainWindow:
                 anchor="w",
                 command=lambda k=key: self._switch_tab(k),
             )
-            btn.pack(fill="x", padx=5, pady=2)
+            btn.pack(fill="x", padx=8, pady=4)
             self._nav_buttons[key] = btn
 
         # Content area
@@ -105,6 +101,7 @@ class MainWindow:
     # ------------------------------------------------------------------
 
     def _init_tabs(self) -> None:
+        """Create tab instances but do not pack them until activated."""
         self.tabs: dict[str, tk.Widget] = {
             "catalog": CatalogTab(self.content, self.events),
             "router": RouterTab(self.content, self.events),
@@ -118,20 +115,19 @@ class MainWindow:
         self._switch_tab("catalog")
 
     def _switch_tab(self, key: str) -> None:
+        """Detach old tab widget, pack new one, call refresh if available."""
         if self.active_tab is not None:
-            old = self.tabs[self.active_tab]
-            old.pack_forget()
+            self.tabs[self.active_tab].pack_forget()
 
         self.active_tab = key
         widget = self.tabs[key]
         widget.pack(fill="both", expand=True)
 
+        # Highlight selected sidebar button
         for k, btn in self._nav_buttons.items():
-            if k == key:
-                btn.configure(relief="sunken")
-            else:
-                btn.configure(relief="raised")
+            btn.configure(relief="sunken" if k == key else "raised")
 
+        # Auto-refresh tab if it supports refresh()
         if hasattr(widget, "refresh"):
             widget.refresh()
 
@@ -139,8 +135,8 @@ class MainWindow:
     # Dialogs
     # ------------------------------------------------------------------
 
-    def _open_new_work(self) -> None:
+    def _open_new_work(self):
         NewWorkDialog(self.root, self.events)
 
-    def _open_settings(self) -> None:
+    def _open_settings(self):
         SettingsDialog(self.root)
