@@ -1,28 +1,14 @@
-# app.py
-# Entry point for the Flet-based SSR Tools application.
+import tkinter as tk
+from gui.main_view import MainWindow
 
-import flet as ft
-from gui.main_view import MainView
+def main():
+    root = tk.Tk()
+    root.title("SSR Tools v8")
+    root.geometry("1400x900")
+    root.minsize(1100, 700)
 
-
-def main(page: ft.Page) -> None:
-    page.title = "SSR Tools"
-    page.vertical_alignment = ft.MainAxisAlignment.START
-    page.horizontal_alignment = ft.CrossAxisAlignment.STRETCH
-    page.theme_mode = ft.ThemeMode.DARK
-    page.theme = ft.Theme(color_scheme_seed="blue")
-
-    # 1. Create MainView instance
-    app_view = MainView(page)
-
-    # 2. Add its root control (NOT a ft.View in Flet 0.28)
-    page.add(app_view.view)
-
-    page.update()
-
-    # 3. Safe to refresh tabs after controls attached
-    app_view.initialize()
-
+    MainWindow(root)
+    root.mainloop()
 
 if __name__ == "__main__":
-    ft.app(target=main)
+    main()
