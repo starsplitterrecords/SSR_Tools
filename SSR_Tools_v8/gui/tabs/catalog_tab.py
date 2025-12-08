@@ -1,185 +1,117 @@
-import os
-import sqlite3
-import yaml
-from pathlib import Path
+from __future__ import annotations
+
 from datetime import datetime
 
-# -----------------------
-# CONFIG
-# -----------------------
-ASSETS_ROOT = r"C:\Users\jeffh\Documents\Star Splitter Records\assets"
-DB_PATH = "catalog.db"
+import tkinter as tk
+from tkinter import ttk
 
-ASSETS_ROOT = ASSETS_ROOT.rstrip("\\") + "\\"
-
-
-def parse_iso(dt_val):
-    if not dt_val:
-        return None
-    if isinstance(dt_val, datetime):
-        return dt_val.isoformat()
-    if isinstance(dt_val, str):
-        return dt_val.strip() or None
-    return None
+from core.models import Work
+from data import catalog_repo
+from helpers.events import EventBus
+from gui.tabs.details_tab import DetailsTab
 
 
-# -----------------------
-# DB helpers (match existing schema)
-# -----------------------
+class CatalogTab(tk.Frame):
+    """
+    Catalog + Details split pane.
+    """
 
-def upsert_work(con: sqlite3.Connection, row: dict):
-    alias = row["alias"]
-    uid = row["uid"]
+    def __init__(self, parent, eventbus: EventBus):
+        super().__init__(parent, bg="#1e1e1e")
+        self.eventbus = eventbus
 
-    cur = con.cursor()
-    cur.execute(
-        "SELECT id FROM works WHERE alias=? AND uid=?",
-        (alias, uid),
-    )
-    existing = cur.fetchone()
+        self.columnconfigure(1, weight=1)
+        self.rowconfigure(1, weight=1)
 
-    title = row.get("title") or ""
-    status = row.get("status") or ""
-    folder_path = row.get("folder_path") or ""
-    created_utc = parse_iso(row.get("created_utc"))
-    planned_release_utc = parse_iso(row.get("planned_release_utc"))
-    actual_release_utc = parse_iso(row.get("actual_release_utc"))
+        header = tk.Frame(self, bg="#1e1e1e")
+        header.grid(row=0, column=0, columnspan=2, sticky="ew", padx=8, pady=4)
 
-    if existing:
-        work_id = existing[0]
-        cur.execute(
-            """
-            UPDATE works
-               SET title=?,
-                   status=?,
-                   folder_path=?,
-                   created_utc=?,
-                   planned_release_utc=?,
-                   actual_release_utc=?
-             WHERE id=?
-            """,
-            (
-                title,
-                status,
-                folder_path,
-                created_utc,
-                planned_release_utc,
-                actual_release_utc,
-                work_id,
-            ),
+        tk.Label(
+            header,
+            text="Catalog",
+            bg="#1e1e1e",
+            fg="#ffffff",
+            font=("Segoe UI", 12, "bold"),
+        ).pack(side="left")
+
+        tk.Button(header, text="Refresh", command=self._manual_refresh).pack(
+            side="right"
         )
-        print(f"UPDATED: {alias}/{uid}")
-    else:
-        cur.execute(
-            """
-            INSERT INTO works
-                (alias, uid, title, status, folder_path,
-                 created_utc, planned_release_utc, actual_release_utc)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                alias,
-                uid,
-                title,
-                status,
-                folder_path,
-                created_utc,
-                planned_release_utc,
-                actual_release_utc,
-            ),
+
+        # Left table
+        left = tk.Frame(self, bg="#1e1e1e")
+        left.grid(row=1, column=0, sticky="nsew", padx=8, pady=8)
+        left.rowconfigure(0, weight=1)
+        left.columnconfigure(0, weight=1)
+
+        columns = ("alias", "uid", "title", "status", "planned")
+        self.table = ttk.Treeview(left, columns=columns, show="headings")
+        for col, text in zip(
+            columns,
+            ["Alias", "UID", "Title", "Status", "Planned Release"],
+        ):
+            self.table.heading(col, text=text)
+            self.table.column(col, width=100 if col != "title" else 240, anchor="w")
+
+        self.table.grid(row=0, column=0, sticky="nsew")
+
+        vsb = ttk.Scrollbar(left, orient="vertical", command=self.table.yview)
+        self.table.configure(yscrollcommand=vsb.set)
+        vsb.grid(row=0, column=1, sticky="ns")
+
+        self.table.bind("<<TreeviewSelect>>", self._on_select)
+
+        # Right: Details
+        self.details = DetailsTab(self, eventbus)
+        self.details.grid(row=1, column=1, sticky="nsew", padx=8, pady=8)
+
+        eventbus.subscribe("work_created", lambda w: self.refresh())
+        eventbus.subscribe("work_updated", lambda w: self.refresh())
+
+    # ------------------------------------------------------------------ helpers
+
+    def _manual_refresh(self) -> None:
+        self.refresh()
+
+    def _make_id(self, work: Work) -> str:
+        return f"{work.alias}::{work.uid}"
+
+    def _on_select(self, event) -> None:
+        sel = self.table.selection()
+        if not sel:
+            return
+        item_id = sel[0]
+        alias, uid = item_id.split("::", 1)
+        from data import catalog_repo
+
+        w = catalog_repo.get_work(alias, uid)
+        if w:
+            self.eventbus.publish("work_selected", w)
+
+    # ------------------------------------------------------------------ data
+
+    def refresh(self) -> None:
+        for row in self.table.get_children():
+            self.table.delete(row)
+
+        works = catalog_repo.list_works()
+        works.sort(
+            key=lambda w: (
+                getattr(w, "planned_release_utc", None) or datetime.max,
+                w.alias,
+                w.uid,
+            )
         )
-        print(f"INSERTED: {alias}/{uid}")
 
-
-# -----------------------
-# Asset scan
-# -----------------------
-
-def scan_assets():
-    works = []
-
-    for alias in os.listdir(ASSETS_ROOT):
-        alias_dir = os.path.join(ASSETS_ROOT, alias)
-        if not os.path.isdir(alias_dir):
-            continue
-
-        for uid in os.listdir(alias_dir):
-            work_dir = os.path.join(alias_dir, uid)
-            if not os.path.isdir(work_dir):
-                continue
-
-            yaml_path = os.path.join(work_dir, "work.yaml")
-            if not os.path.isfile(yaml_path):
-                continue
-
-            try:
-                with open(yaml_path, "r", encoding="utf-8") as f:
-                    data = yaml.safe_load(f) or {}
-            except Exception as e:
-                print(f"ERROR reading {yaml_path}: {e}")
-                continue
-
-            # Build row dict aligned to DB columns
-            row = {}
-            row["alias"] = alias
-            row["uid"] = uid
-            row["title"] = data.get("title") or data.get("name") or ""
-            row["status"] = data.get("status") or ""
-            row["folder_path"] = work_dir
-            row["created_utc"] = data.get("created_utc") or data.get("created")
-            row["planned_release_utc"] = (
-                data.get("planned_release_utc") or data.get("planned_release")
+        for w in works:
+            planned = (
+                w.planned_release_utc.isoformat()
+                if getattr(w, "planned_release_utc", None)
+                else ""
             )
-            row["actual_release_utc"] = (
-                data.get("actual_release_utc") or data.get("actual_release")
+            self.table.insert(
+                "",
+                "end",
+                iid=self._make_id(w),
+                values=(w.alias, w.uid, w.title, getattr(w, "status", "") or "", planned),
             )
-
-            works.append(row)
-
-    return works
-
-
-# -----------------------
-# Main
-# -----------------------
-
-def main():
-    if not Path(DB_PATH).exists():
-        print("No catalog.db found at", DB_PATH)
-        return
-
-    con = sqlite3.connect(DB_PATH)
-
-    # sanity check
-    cols = con.execute("PRAGMA table_info(works)").fetchall()
-    col_names = [c[1] for c in cols]
-    required = [
-        "id",
-        "alias",
-        "uid",
-        "title",
-        "status",
-        "folder_path",
-        "created_utc",
-        "planned_release_utc",
-        "actual_release_utc",
-    ]
-    missing = [c for c in required if c not in col_names]
-    if missing:
-        print("Schema mismatch; missing columns:", missing)
-        con.close()
-        return
-
-    works = scan_assets()
-    print(f"Found {len(works)} works in assets to upsert into catalog.db")
-
-    for row in works:
-        upsert_work(con, row)
-
-    con.commit()
-    con.close()
-    print("Asset scan migration complete.")
-
-
-if __name__ == "__main__":
-    main()
