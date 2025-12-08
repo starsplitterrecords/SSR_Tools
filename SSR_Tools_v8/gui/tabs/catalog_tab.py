@@ -8,92 +8,157 @@ from tkinter import ttk
 from core.models import Work
 from data import catalog_repo
 from helpers.events import EventBus
+
+from gui import style
+from gui.layouts.two_pane import TwoPane
 from gui.tabs.details_tab import DetailsTab
 
 
 class CatalogTab(tk.Frame):
     """
-    Catalog + Details split pane.
+    Catalog + Details displayed using standardized TwoPane layout.
+
+    Left pane: work table
+    Right pane: embedded DetailsTab
     """
 
     def __init__(self, parent, eventbus: EventBus):
-        super().__init__(parent, bg="#1e1e1e")
+        super().__init__(parent, bg=style.MAIN_BG)
         self.eventbus = eventbus
 
-        self.columnconfigure(1, weight=1)
+        self.columnconfigure(0, weight=1)
         self.rowconfigure(1, weight=1)
 
-        header = tk.Frame(self, bg="#1e1e1e")
-        header.grid(row=0, column=0, columnspan=2, sticky="ew", padx=8, pady=4)
+        # ------------------------------------------------------------------
+        # HEADER
+        # ------------------------------------------------------------------
+        header = tk.Frame(self, bg=style.MAIN_BG)
+        header.grid(row=0, column=0, sticky="ew", padx=style.PAD_X, pady=style.PAD_Y)
 
         tk.Label(
             header,
             text="Catalog",
-            bg="#1e1e1e",
-            fg="#ffffff",
-            font=("Segoe UI", 12, "bold"),
+            font=(style.FONT_FAMILY, style.FONT_SIZE_LARGE, "bold"),
+            bg=style.MAIN_BG,
+            fg=style.MAIN_FG,
         ).pack(side="left")
 
-        tk.Button(header, text="Refresh", command=self._manual_refresh).pack(
-            side="right"
+        tk.Button(
+            header,
+            text="Refresh",
+            command=self.refresh,
+            bg=style.BUTTON_BG,
+            fg=style.BUTTON_FG,
+        ).pack(side="right")
+
+        # ------------------------------------------------------------------
+        # PANE LAYOUT
+        # ------------------------------------------------------------------
+        pane = TwoPane(
+            self,
+            left_scroll=False,
+            right_scroll=True,
+            left_width=380,
         )
+        pane.grid(row=1, column=0, sticky="nsew", padx=style.PAD_X, pady=(0, style.PAD_Y))
+        self.pane = pane
 
-        # Left table
-        left = tk.Frame(self, bg="#1e1e1e")
-        left.grid(row=1, column=0, sticky="nsew", padx=8, pady=8)
-        left.rowconfigure(0, weight=1)
-        left.columnconfigure(0, weight=1)
+        # ------------------------------------------------------------------
+        # LEFT TABLE
+        # ------------------------------------------------------------------
+        self._build_table(pane.left)
 
-        columns = ("alias", "uid", "title", "status", "planned")
-        self.table = ttk.Treeview(left, columns=columns, show="headings")
-        for col, text in zip(
-            columns,
-            ["Alias", "UID", "Title", "Status", "Planned Release"],
-        ):
-            self.table.heading(col, text=text)
-            self.table.column(col, width=100 if col != "title" else 240, anchor="w")
+        # ------------------------------------------------------------------
+        # RIGHT DETAILS PANEL
+        # ------------------------------------------------------------------
+        self.details = DetailsTab(pane.right, self.eventbus)
 
-        self.table.grid(row=0, column=0, sticky="nsew")
-
-        vsb = ttk.Scrollbar(left, orient="vertical", command=self.table.yview)
-        self.table.configure(yscrollcommand=vsb.set)
-        vsb.grid(row=0, column=1, sticky="ns")
-
-        self.table.bind("<<TreeviewSelect>>", self._on_select)
-
-        # Right: Details
-        self.details = DetailsTab(self, eventbus)
-        self.details.grid(row=1, column=1, sticky="nsew", padx=8, pady=8)
-
+        # Event subscriptions
         eventbus.subscribe("work_created", lambda w: self.refresh())
         eventbus.subscribe("work_updated", lambda w: self.refresh())
 
-    # ------------------------------------------------------------------ helpers
+    # ----------------------------------------------------------------------
+    # TABLE
+    # ----------------------------------------------------------------------
 
-    def _manual_refresh(self) -> None:
-        self.refresh()
+    def _build_table(self, parent: tk.Frame) -> None:
+        parent.columnconfigure(0, weight=1)
+        parent.rowconfigure(1, weight=1)
 
-    def _make_id(self, work: Work) -> str:
+        tk.Label(
+            parent,
+            text="Works",
+            fg=style.MAIN_FG,
+            bg=style.MAIN_BG,
+            font=(style.FONT_FAMILY, style.FONT_SIZE_BASE, "bold"),
+        ).grid(row=0, column=0, sticky="w", pady=(0, style.PAD_Y))
+
+        columns = ("alias", "uid", "title", "status", "planned")
+        self.table = ttk.Treeview(
+            parent,
+            columns=columns,
+            show="headings",
+            height=20,
+        )
+
+        col_config = {
+            "alias": 80,
+            "uid": 80,
+            "title": 200,
+            "status": 120,
+            "planned": 160,
+        }
+
+        headings = {
+            "alias": "Alias",
+            "uid": "UID",
+            "title": "Title",
+            "status": "Status",
+            "planned": "Planned Release",
+        }
+
+        for col in columns:
+            self.table.heading(col, text=headings[col])
+            self.table.column(col, width=col_config[col], anchor="w")
+
+        self.table.grid(row=1, column=0, sticky="nsew")
+
+        vsb = ttk.Scrollbar(parent, orient="vertical", command=self.table.yview)
+        self.table.configure(yscrollcommand=vsb.set)
+        vsb.grid(row=1, column=1, sticky="ns")
+
+        self.table.bind("<<TreeviewSelect>>", self._on_select)
+
+    # ----------------------------------------------------------------------
+    # HELPERS
+    # ----------------------------------------------------------------------
+
+    @staticmethod
+    def _make_id(work: Work) -> str:
         return f"{work.alias}::{work.uid}"
 
     def _on_select(self, event) -> None:
         sel = self.table.selection()
         if not sel:
             return
+
         item_id = sel[0]
         alias, uid = item_id.split("::", 1)
-        from data import catalog_repo
 
         w = catalog_repo.get_work(alias, uid)
         if w:
             self.eventbus.publish("work_selected", w)
 
-    # ------------------------------------------------------------------ data
+    # ----------------------------------------------------------------------
+    # DATA REFRESH
+    # ----------------------------------------------------------------------
 
     def refresh(self) -> None:
+        # Clear table
         for row in self.table.get_children():
             self.table.delete(row)
 
+        # Load works
         works = catalog_repo.list_works()
         works.sort(
             key=lambda w: (
@@ -103,8 +168,9 @@ class CatalogTab(tk.Frame):
             )
         )
 
+        # Populate
         for w in works:
-            planned = (
+            planned_str = (
                 w.planned_release_utc.isoformat()
                 if getattr(w, "planned_release_utc", None)
                 else ""
@@ -113,5 +179,11 @@ class CatalogTab(tk.Frame):
                 "",
                 "end",
                 iid=self._make_id(w),
-                values=(w.alias, w.uid, w.title, getattr(w, "status", "") or "", planned),
+                values=(
+                    w.alias,
+                    w.uid,
+                    w.title,
+                    getattr(w, "status", "") or "",
+                    planned_str,
+                ),
             )

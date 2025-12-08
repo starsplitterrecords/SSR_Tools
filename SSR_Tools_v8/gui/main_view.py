@@ -6,6 +6,7 @@ from tkinter import ttk
 from core.app_state import AppState
 from helpers.events import EventBus
 
+from gui import style
 from gui.tabs.catalog_tab import CatalogTab
 from gui.tabs.alias_tab import AliasTab
 from gui.tabs.router_tab import RouterTab
@@ -19,16 +20,34 @@ from gui.dialogs.settings_dialog import SettingsDialog
 
 class MainWindow:
     """
-    Main application window for SSR Tools v8 (Tkinter).
-    Handles:
-      - top bar
-      - sidebar navigation
-      - tab switching
-      - initialization of AppState + EventBus
+    SSR Tools v8 — Main Window (Tkinter)
+    Uses a TOP NAVIGATION BAR (A1+B1 spec):
+        [Prev]  [Catalog] [Router] [BarSplitter] [Image] [Scheduler] [Aliases]  [Next] ... (right side: New Work, Settings)
+
+    No sidebar. Content area shows the active tab.
     """
+
+    TAB_ORDER = [
+        "catalog",
+        "router",
+        "bar",
+        "image",
+        "scheduler",
+        "aliases",
+    ]
+
+    TAB_LABELS = {
+        "catalog": "Catalog",
+        "router": "Router",
+        "bar": "Bar Splitter",
+        "image": "Image Splitter",
+        "scheduler": "Scheduler",
+        "aliases": "Aliases",
+    }
 
     def __init__(self, root: tk.Tk):
         self.root = root
+        style.apply_global_style(root)
 
         self.state = AppState()
         self.events = EventBus()
@@ -36,72 +55,91 @@ class MainWindow:
         self._build_layout()
         self._init_tabs()
 
-    # ------------------------------------------------------------------
-    # Layout
-    # ------------------------------------------------------------------
+    # ----------------------------------------------------------------------
+    # LAYOUT
+    # ----------------------------------------------------------------------
 
     def _build_layout(self) -> None:
-        # Root grid
         self.root.rowconfigure(1, weight=1)
-        self.root.columnconfigure(1, weight=1)
+        self.root.columnconfigure(0, weight=1)
 
-        # Top bar
-        bar = tk.Frame(self.root, bg="#303030", height=40)
-        bar.grid(row=0, column=0, columnspan=2, sticky="nsew")
+        # --------------------------------------------------------------
+        # TOP NAV BAR
+        # --------------------------------------------------------------
+        bar = tk.Frame(self.root, bg=style.TOPBAR_BG, height=44)
+        bar.grid(row=0, column=0, sticky="nsew")
         bar.grid_propagate(False)
 
-        title_lbl = tk.Label(
+        # Left: Prev
+        prev_btn = tk.Button(
             bar,
-            text="SSR Tools v8",
-            bg="#303030",
-            fg="#ffffff",
-            font=("Segoe UI", 14, "bold"),
+            text="◀",
+            command=self._prev_tab,
+            bg=style.BUTTON_BG,
+            fg=style.BUTTON_FG,
+            width=4,
         )
-        title_lbl.pack(side="left", padx=10)
+        prev_btn.pack(side="left", padx=style.PAD_X)
 
-        tk.Button(bar, text="Settings", command=self._open_settings).pack(
-            side="right", padx=6
-        )
-        tk.Button(bar, text="New Work", command=self._open_new_work).pack(
-            side="right", padx=6
-        )
+        # Center: Tab Buttons
+        center = tk.Frame(bar, bg=style.TOPBAR_BG)
+        center.pack(side="left", padx=style.PAD_X_LARGE)
 
-        # Sidebar
-        sidebar = tk.Frame(self.root, bg="#252525", width=200)
-        sidebar.grid(row=1, column=0, sticky="nsew")
-        sidebar.grid_propagate(False)
+        self._tab_buttons: dict[str, tk.Button] = {}
 
-        buttons = [
-            ("Catalog", "catalog"),
-            ("Router", "router"),
-            ("Bar Splitter", "bar"),
-            ("Image Splitter", "image"),
-            ("Scheduler", "scheduler"),
-            ("Aliases", "aliases"),
-        ]
-
-        self._nav_buttons: dict[str, tk.Button] = {}
-
-        for label, key in buttons:
+        for key in self.TAB_ORDER:
             btn = tk.Button(
-                sidebar,
-                text=label,
-                anchor="w",
+                center,
+                text=self.TAB_LABELS[key],
                 command=lambda k=key: self._switch_tab(k),
+                bg=style.BUTTON_BG,
+                fg=style.BUTTON_FG,
             )
-            btn.pack(fill="x", padx=8, pady=4)
-            self._nav_buttons[key] = btn
+            btn.pack(side="left", padx=4, pady=6)
+            self._tab_buttons[key] = btn
 
-        # Content area
-        self.content = tk.Frame(self.root, bg="#1e1e1e")
-        self.content.grid(row=1, column=1, sticky="nsew")
+        # Right: Next + Actions
+        right = tk.Frame(bar, bg=style.TOPBAR_BG)
+        right.pack(side="right", padx=style.PAD_X)
 
-    # ------------------------------------------------------------------
-    # Tabs
-    # ------------------------------------------------------------------
+        next_btn = tk.Button(
+            right,
+            text="▶",
+            command=self._next_tab,
+            bg=style.BUTTON_BG,
+            fg=style.BUTTON_FG,
+            width=4,
+        )
+        next_btn.pack(side="left", padx=style.PAD_X)
+
+        tk.Button(
+            right,
+            text="New Work",
+            command=self._open_new_work,
+            bg=style.BUTTON_BG,
+            fg=style.BUTTON_FG,
+        ).pack(side="left", padx=style.PAD_X)
+
+        tk.Button(
+            right,
+            text="Settings",
+            command=self._open_settings,
+            bg=style.BUTTON_BG,
+            fg=style.BUTTON_FG,
+        ).pack(side="left", padx=style.PAD_X)
+
+        # --------------------------------------------------------------
+        # CONTENT AREA
+        # --------------------------------------------------------------
+        self.content = tk.Frame(self.root, bg=style.MAIN_BG)
+        self.content.grid(row=1, column=0, sticky="nsew")
+
+    # ----------------------------------------------------------------------
+    # TABS
+    # ----------------------------------------------------------------------
 
     def _init_tabs(self) -> None:
-        """Create tab instances but do not pack them until activated."""
+        """Create tab instances but only pack active tab."""
         self.tabs: dict[str, tk.Widget] = {
             "catalog": CatalogTab(self.content, self.events),
             "router": RouterTab(self.content, self.events),
@@ -115,7 +153,6 @@ class MainWindow:
         self._switch_tab("catalog")
 
     def _switch_tab(self, key: str) -> None:
-        """Detach old tab widget, pack new one, call refresh if available."""
         if self.active_tab is not None:
             self.tabs[self.active_tab].pack_forget()
 
@@ -123,17 +160,38 @@ class MainWindow:
         widget = self.tabs[key]
         widget.pack(fill="both", expand=True)
 
-        # Highlight selected sidebar button
-        for k, btn in self._nav_buttons.items():
-            btn.configure(relief="sunken" if k == key else "raised")
+        # Update tab button highlight
+        for k, btn in self._tab_buttons.items():
+            if k == key:
+                btn.configure(relief="sunken", bg=style.HIGHLIGHT_BG)
+            else:
+                btn.configure(relief="raised", bg=style.BUTTON_BG)
 
-        # Auto-refresh tab if it supports refresh()
+        # Auto-refresh tab if it has refresh()
         if hasattr(widget, "refresh"):
             widget.refresh()
 
-    # ------------------------------------------------------------------
-    # Dialogs
-    # ------------------------------------------------------------------
+    # ----------------------------------------------------------------------
+    # TAB CYCLING
+    # ----------------------------------------------------------------------
+
+    def _prev_tab(self) -> None:
+        if not self.active_tab:
+            return
+        idx = self.TAB_ORDER.index(self.active_tab)
+        idx = (idx - 1) % len(self.TAB_ORDER)
+        self._switch_tab(self.TAB_ORDER[idx])
+
+    def _next_tab(self) -> None:
+        if not self.active_tab:
+            return
+        idx = self.TAB_ORDER.index(self.active_tab)
+        idx = (idx + 1) % len(self.TAB_ORDER)
+        self._switch_tab(self.TAB_ORDER[idx])
+
+    # ----------------------------------------------------------------------
+    # DIALOGS
+    # ----------------------------------------------------------------------
 
     def _open_new_work(self):
         NewWorkDialog(self.root, self.events)

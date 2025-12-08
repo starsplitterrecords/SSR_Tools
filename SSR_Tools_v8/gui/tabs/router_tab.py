@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 import os
+from typing import List
+
 import tkinter as tk
-from tkinter import filedialog, messagebox
+from tkinter import ttk, filedialog, messagebox
 
 from data import config_repo
+from helpers.events import EventBus
+
+from gui import style
 from gui.dialogs.router_process_dialog import (
     RouterProcessDialog,
     BatchRouterProcessDialog,
@@ -14,119 +19,229 @@ from gui.dialogs.router_process_dialog import (
 class RouterTab(tk.Frame):
     """
     Router inbox browser with multi-select batch processing (Tkinter).
+
+    Layout:
+        +-----------------------------------------------------------+
+        | Header: Router Inbox Folder [entry] [Change] [Refresh]    |
+        +-----------------------------------------------------------+
+        | Controls: [Process Selected] [Batch Selected] [Batch All] |
+        +-----------------------------------------------------------+
+        | Inbox List (multi-select)                                 |
+        +-----------------------------------------------------------+
     """
 
-    def __init__(self, parent, eventbus):
-        super().__init__(parent, bg="#1e1e1e")
+    def __init__(self, parent, eventbus: EventBus):
+        super().__init__(parent, bg=style.MAIN_BG)
         self.eventbus = eventbus
 
         self.columnconfigure(0, weight=1)
         self.rowconfigure(2, weight=1)
 
         cfg = config_repo.load_config()
+        inbox_default = cfg.get("router_inbox_path", "") or ""
 
-        # Inbox path field
-        top = tk.Frame(self, bg="#1e1e1e")
-        top.grid(row=0, column=0, sticky="ew", padx=8, pady=8)
+        # ------------------------------------------------------------------
+        # HEADER ROW
+        # ------------------------------------------------------------------
+        header = tk.Frame(self, bg=style.MAIN_BG)
+        header.grid(row=0, column=0, sticky="ew", padx=style.PAD_X, pady=style.PAD_Y)
 
         tk.Label(
-            top,
+            header,
             text="Router Inbox Folder",
-            bg="#1e1e1e",
-            fg="#ffffff",
+            bg=style.MAIN_BG,
+            fg=style.MAIN_FG,
         ).pack(side="left")
 
-        self.inbox_var = tk.StringVar(value=cfg.get("router_inbox_path", "") or "")
-        self.inbox_entry = tk.Entry(top, textvariable=self.inbox_var, width=60)
-        self.inbox_entry.pack(side="left", padx=5)
+        self.inbox_var = tk.StringVar(value=inbox_default)
+        self.inbox_entry = tk.Entry(header, textvariable=self.inbox_var, width=60)
+        self.inbox_entry.pack(side="left", padx=style.PAD_X)
 
-        tk.Button(top, text="Change", command=self._change_inbox).pack(side="left")
-        tk.Button(top, text="Refresh", command=self._on_refresh_click).pack(
-            side="left", padx=3
-        )
         tk.Button(
-            top, text="Process Selected", command=self._process_selected
-        ).pack(side="left", padx=3)
+            header,
+            text="Change",
+            command=self._change_inbox,
+            bg=style.BUTTON_BG,
+            fg=style.BUTTON_FG,
+        ).pack(side="left", padx=4)
 
-        # File list
-        self.file_list = tk.Listbox(self, selectmode=tk.EXTENDED)
-        self.file_list.grid(row=2, column=0, sticky="nsew", padx=8, pady=(0, 8))
+        tk.Button(
+            header,
+            text="Refresh",
+            command=self._on_refresh_click,
+            bg=style.BUTTON_BG,
+            fg=style.BUTTON_FG,
+        ).pack(side="left", padx=4)
 
-        self._paths: list[str] = []
+        # ------------------------------------------------------------------
+        # CONTROL ROW
+        # ------------------------------------------------------------------
+        controls = tk.Frame(self, bg=style.MAIN_BG)
+        controls.grid(row=1, column=0, sticky="ew", padx=style.PAD_X, pady=(0, style.PAD_Y))
 
-        # Auto-refresh loop
-        self._auto_refresh()
+        tk.Button(
+            controls,
+            text="Process Selected",
+            command=self._process_selected_single,
+            bg=style.BUTTON_BG,
+            fg=style.BUTTON_FG,
+        ).pack(side="left", padx=4)
+
+        tk.Button(
+            controls,
+            text="Batch Selected",
+            command=self._process_selected_batch,
+            bg=style.BUTTON_BG,
+            fg=style.BUTTON_FG,
+        ).pack(side="left", padx=4)
+
+        tk.Button(
+            controls,
+            text="Batch All",
+            command=self._process_all_batch,
+            bg=style.BUTTON_BG,
+            fg=style.BUTTON_FG,
+        ).pack(side="left", padx=4)
+
+        # ------------------------------------------------------------------
+        # INBOX LIST
+        # ------------------------------------------------------------------
+        list_frame = tk.Frame(self, bg=style.MAIN_BG)
+        list_frame.grid(
+            row=2,
+            column=0,
+            sticky="nsew",
+            padx=style.PAD_X,
+            pady=(0, style.PAD_Y_LARGE),
+        )
+        list_frame.columnconfigure(0, weight=1)
+        list_frame.rowconfigure(0, weight=1)
+
+        self.listbox = tk.Listbox(
+            list_frame,
+            selectmode="extended",
+        )
+        self.listbox.grid(row=0, column=0, sticky="nsew")
+
+        vsb = ttk.Scrollbar(list_frame, orient="vertical", command=self.listbox.yview)
+        self.listbox.configure(yscrollcommand=vsb.set)
+        vsb.grid(row=0, column=1, sticky="ns")
+
+        self.listbox.bind("<Double-Button-1>", self._on_double_click)
+
+        # paths indexed by listbox index
+        self._items: List[str] = []
+
+        # Initial load
+        self._load_inbox()
 
     # ------------------------------------------------------------------
-
-    def _change_inbox(self) -> None:
-        path = filedialog.askdirectory(title="Select router inbox folder")
-        if not path:
-            return
-        self._save_inbox_to_config(path)
-        self._on_refresh_click()
-
-    def _save_inbox_to_config(self, new_path: str) -> None:
-        cfg = config_repo.load_config()
-        cfg["router_inbox_path"] = new_path
-        config_repo.save_config(cfg)
-        self.inbox_var.set(new_path)
-
-    def _on_refresh_click(self) -> None:
-        self.refresh()
+    # REFRESH / LOAD
+    # ------------------------------------------------------------------
 
     def refresh(self) -> None:
+        """Public refresh entry point (called by main_view)."""
+        self._load_inbox()
+
+    def _on_refresh_click(self) -> None:
+        self._load_inbox()
+
+    def _load_inbox(self) -> None:
+        """Populate listbox from the inbox folder."""
         inbox = self.inbox_var.get().strip()
-        self.file_list.delete(0, tk.END)
-        self._paths.clear()
+        self._items.clear()
+        self.listbox.delete(0, tk.END)
 
         if not inbox or not os.path.isdir(inbox):
-            self.file_list.insert(tk.END, "Inbox folder not set or does not exist.")
             return
 
-        entries = sorted(os.listdir(inbox))
-        if not entries:
-            self.file_list.insert(tk.END, "(No files)")
+        try:
+            entries = sorted(os.listdir(inbox))
+        except OSError as exc:
+            messagebox.showerror("Router", f"Unable to read inbox: {exc}")
             return
 
         for name in entries:
             full = os.path.join(inbox, name)
-            label = f"[DIR] {name}" if os.path.isdir(full) else name
-            self.file_list.insert(tk.END, label)
-            self._paths.append(full)
+            self._items.append(full)
+            self.listbox.insert(tk.END, name)
 
-    def _process_selected(self) -> None:
-        sel = self.file_list.curselection()
+    # ------------------------------------------------------------------
+    # INBOX PATH CHANGE
+    # ------------------------------------------------------------------
+
+    def _change_inbox(self) -> None:
+        path = filedialog.askdirectory(title="Select router inbox")
+        if not path:
+            return
+
+        self.inbox_var.set(path)
+
+        cfg = config_repo.load_config()
+        cfg["router_inbox_path"] = path
+        config_repo.save_config(cfg)
+
+        self._load_inbox()
+
+    # ------------------------------------------------------------------
+    # SELECTION HELPERS
+    # ------------------------------------------------------------------
+
+    def _selected_paths(self) -> List[str]:
+        sel = self.listbox.curselection()
         if not sel:
+            return []
+        paths: List[str] = []
+        for idx in sel:
+            if 0 <= idx < len(self._items):
+                paths.append(self._items[idx])
+        return paths
+
+    # ------------------------------------------------------------------
+    # ACTIONS
+    # ------------------------------------------------------------------
+
+    def _on_double_click(self, event=None) -> None:
+        # Double-click processes a single item
+        self._process_selected_single()
+
+    def _process_selected_single(self) -> None:
+        paths = self._selected_paths()
+        if not paths:
+            messagebox.showinfo("Router", "No item selected.")
+            return
+
+        if len(paths) > 1:
+            # If multiple, use batch instead
+            self._process_selected_batch()
+            return
+
+        selected = paths[0]
+        dlg = RouterProcessDialog(self, selected_path=selected, on_created=self._on_work_created)
+        self.wait_window(dlg)
+
+    def _process_selected_batch(self) -> None:
+        paths = self._selected_paths()
+        if not paths:
             messagebox.showinfo("Router", "No items selected.")
             return
 
-        paths = [self._paths[i] for i in sel if i < len(self._paths)]
-        if not paths:
+        dlg = BatchRouterProcessDialog(self, selected_paths=paths, on_created=self._on_work_created)
+        self.wait_window(dlg)
+
+    def _process_all_batch(self) -> None:
+        if not self._items:
+            messagebox.showinfo("Router", "Inbox is empty.")
             return
 
-        if len(paths) == 1:
-            dlg = RouterProcessDialog(
-                self.winfo_toplevel(),
-                selected_path=paths[0],
-                on_created=lambda w: self.eventbus.publish("work_created", w),
-            )
-            dlg.wait_window()
-        else:
-            dlg = BatchRouterProcessDialog(
-                self.winfo_toplevel(),
-                selected_paths=paths,
-                on_created=lambda w: self.eventbus.publish("work_created", w),
-            )
-            dlg.wait_window()
+        dlg = BatchRouterProcessDialog(self, selected_paths=list(self._items), on_created=self._on_work_created)
+        self.wait_window(dlg)
 
     # ------------------------------------------------------------------
-    # Auto-refresh
+    # CALLBACKS
+    # ------------------------------------------------------------------
 
-    def _auto_refresh(self) -> None:
-        cfg = config_repo.load_config()
-        interval = int(cfg.get("refresh_interval_seconds", 60) or 60)
-        if cfg.get("auto_refresh_router", False):
-            self.refresh()
-        # schedule next check
-        self.after(max(5000, interval * 1000), self._auto_refresh)
+    def _on_work_created(self, work) -> None:
+        # Notify listeners that a new work was created
+        if self.eventbus:
+            self.eventbus.publish("work_created", work)

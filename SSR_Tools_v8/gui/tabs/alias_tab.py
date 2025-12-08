@@ -7,96 +7,150 @@ from core.models import Alias
 from data import alias_repo
 from helpers.events import EventBus
 
+from gui import style
+
 
 class AliasTab(tk.Frame):
     """
-    Simple alias manager backed by alias_repo.
+    Alias manager (SSR compliant, A1+B1 UI).
+
+    Layout:
+        +----------------------------------------------------------+
+        | Header: Aliases                                          |
+        +----------------------------------------------------------+
+        | LEFT: alias list | RIGHT: alias form (fields + notes)    |
+        +----------------------------------------------------------+
     """
 
     def __init__(self, parent, eventbus: EventBus):
-        super().__init__(parent, bg="#1e1e1e")
+        super().__init__(parent, bg=style.MAIN_BG)
         self.eventbus = eventbus
 
         self.columnconfigure(1, weight=1)
-        self.rowconfigure(0, weight=1)
+        self.rowconfigure(1, weight=1)
 
-        # Left list
-        left = tk.Frame(self, bg="#1e1e1e")
-        left.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
+        # ------------------------------------------------------------------
+        # HEADER
+        # ------------------------------------------------------------------
+        header = tk.Frame(self, bg=style.MAIN_BG)
+        header.grid(row=0, column=0, columnspan=2, sticky="ew",
+                    padx=style.PAD_X, pady=style.PAD_Y)
 
-        tk.Label(left, text="Aliases", bg="#1e1e1e", fg="#ffffff").pack(
-            anchor="w", pady=(0, 4)
-        )
+        tk.Label(
+            header,
+            text="Aliases",
+            font=(style.FONT_FAMILY, style.FONT_SIZE_LARGE, "bold"),
+            bg=style.MAIN_BG,
+            fg=style.MAIN_FG,
+        ).pack(side="left")
+
+        tk.Button(
+            header,
+            text="Refresh",
+            command=self.refresh,
+            bg=style.BUTTON_BG,
+            fg=style.BUTTON_FG,
+        ).pack(side="right")
+
+        # ------------------------------------------------------------------
+        # LEFT COLUMN — ALIAS LIST
+        # ------------------------------------------------------------------
+        left = tk.Frame(self, bg=style.MAIN_BG)
+        left.grid(row=1, column=0, sticky="nsew", padx=(style.PAD_X, style.PAD_X_LARGE),
+                  pady=(0, style.PAD_Y_LARGE))
+        left.rowconfigure(1, weight=1)
+        left.columnconfigure(0, weight=1)
+
+        tk.Label(
+            left,
+            text="Alias Codes",
+            bg=style.MAIN_BG,
+            fg=style.MAIN_FG,
+            font=(style.FONT_FAMILY, style.FONT_SIZE_BASE, "bold"),
+        ).grid(row=0, column=0, sticky="w", pady=(0, style.PAD_Y))
 
         self.listbox = tk.Listbox(left, height=20)
-        self.listbox.pack(fill="both", expand=True)
+        self.listbox.grid(row=1, column=0, sticky="nsew")
+
+        vsb = ttk.Scrollbar(left, orient="vertical", command=self.listbox.yview)
+        self.listbox.configure(yscrollcommand=vsb.set)
+        vsb.grid(row=1, column=1, sticky="ns")
+
         self.listbox.bind("<<ListboxSelect>>", self._on_select)
 
-        # Right form
-        right = tk.Frame(self, bg="#1e1e1e")
-        right.grid(row=0, column=1, sticky="nsew", padx=8, pady=8)
+        # ------------------------------------------------------------------
+        # RIGHT COLUMN — FORM
+        # ------------------------------------------------------------------
+        right = tk.Frame(self, bg=style.MAIN_BG)
+        right.grid(row=1, column=1, sticky="nsew",
+                   padx=(0, style.PAD_X), pady=(0, style.PAD_Y_LARGE))
+        right.columnconfigure(0, weight=1)
+        right.rowconfigure(9, weight=1)
 
+        # Form variables
         self.codename_var = tk.StringVar()
         self.display_var = tk.StringVar()
         self.project_var = tk.StringVar()
         self.style_var = tk.StringVar()
 
-        tk.Label(right, text="Codename", bg="#1e1e1e", fg="#ffffff").grid(
-            row=0, column=0, sticky="w"
-        )
-        tk.Entry(right, textvariable=self.codename_var).grid(
-            row=1, column=0, sticky="ew", pady=(0, 4)
-        )
+        # Helper
+        def add_field(label: str, var: tk.StringVar):
+            tk.Label(
+                right,
+                text=label,
+                bg=style.MAIN_BG,
+                fg=style.MAIN_FG,
+            ).pack(anchor="w", pady=(style.PAD_Y_SMALL, 0))
 
-        tk.Label(right, text="Display Name", bg="#1e1e1e", fg="#ffffff").grid(
-            row=2, column=0, sticky="w"
-        )
-        tk.Entry(right, textvariable=self.display_var).grid(
-            row=3, column=0, sticky="ew", pady=(0, 4)
-        )
+            e = tk.Entry(right, textvariable=var)
+            e.pack(fill="x", pady=(0, style.PAD_Y))
+            return e
 
-        tk.Label(right, text="Project Name", bg="#1e1e1e", fg="#ffffff").grid(
-            row=4, column=0, sticky="w"
-        )
-        tk.Entry(right, textvariable=self.project_var).grid(
-            row=5, column=0, sticky="ew", pady=(0, 4)
-        )
+        add_field("Codename", self.codename_var)
+        add_field("Display Name", self.display_var)
+        add_field("Project Name", self.project_var)
+        add_field("Visual Style", self.style_var)
 
-        tk.Label(right, text="Visual Style", bg="#1e1e1e", fg="#ffffff").grid(
-            row=6, column=0, sticky="w"
-        )
-        tk.Entry(right, textvariable=self.style_var).grid(
-            row=7, column=0, sticky="ew", pady=(0, 4)
-        )
+        # Notes (multiline)
+        tk.Label(
+            right,
+            text="Notes",
+            bg=style.MAIN_BG,
+            fg=style.MAIN_FG,
+        ).pack(anchor="w", pady=(style.PAD_Y_SMALL, 0))
 
-        tk.Label(right, text="Notes", bg="#1e1e1e", fg="#ffffff").grid(
-            row=8, column=0, sticky="w"
-        )
         self.notes_text = tk.Text(right, height=6)
-        self.notes_text.grid(row=9, column=0, sticky="nsew", pady=(0, 4))
+        self.notes_text.pack(fill="x", pady=(0, style.PAD_Y))
 
-        right.columnconfigure(0, weight=1)
-        right.rowconfigure(9, weight=1)
+        # Buttons
+        btn_row = tk.Frame(right, bg=style.MAIN_BG)
+        btn_row.pack(anchor="e", pady=(style.PAD_Y, 0))
 
-        btn_frame = tk.Frame(right, bg="#1e1e1e")
-        btn_frame.grid(row=10, column=0, sticky="ew", pady=(6, 0))
-        tk.Button(btn_frame, text="Save", command=self.save_alias).pack(
-            side="left", padx=2
-        )
-        tk.Button(btn_frame, text="Delete", command=self.delete_alias).pack(
-            side="left", padx=2
-        )
+        tk.Button(
+            btn_row,
+            text="Save",
+            command=self.save_alias,
+            bg=style.BUTTON_BG,
+            fg=style.BUTTON_FG,
+        ).pack(side="left", padx=4)
 
+        tk.Button(
+            btn_row,
+            text="Delete",
+            command=self.delete_alias,
+            bg=style.BUTTON_BG,
+            fg=style.BUTTON_FG,
+        ).pack(side="left", padx=4)
+
+        # Internal state
         self.selected_alias: Alias | None = None
 
-    # ------------------------------------------------------------------ external
+    # ----------------------------------------------------------------------
+    # EVENT-HANDLED METHODS
+    # ----------------------------------------------------------------------
 
     def refresh(self) -> None:
-        self._refresh_list()
-
-    # ------------------------------------------------------------------ internals
-
-    def _refresh_list(self) -> None:
+        """Reload alias list."""
         self.listbox.delete(0, tk.END)
         aliases = alias_repo.list_aliases()
         for alias in aliases:
@@ -106,29 +160,35 @@ class AliasTab(tk.Frame):
         sel = self.listbox.curselection()
         if not sel:
             return
-        index = sel[0]
-        codename = self.listbox.get(index)
+
+        codename = self.listbox.get(sel[0])
         alias = alias_repo.get_alias(codename)
         if not alias:
             return
 
         self.selected_alias = alias
+
         self.codename_var.set(alias.codename)
         self.display_var.set(alias.display_name or "")
         self.project_var.set(alias.project_name or "")
         self.style_var.set(alias.visual_style or "")
+
         self.notes_text.delete("1.0", tk.END)
-        self.notes_text.insert(tk.END, alias.notes or "")
+        self.notes_text.insert("end", alias.notes or "")
+
+    # ----------------------------------------------------------------------
+    # SAVE / DELETE
+    # ----------------------------------------------------------------------
 
     def save_alias(self) -> None:
         codename = self.codename_var.get().strip()
         if not codename:
-            messagebox.showwarning("Alias", "Codename required.")
+            messagebox.showwarning("Alias", "Codename is required.")
             return
 
         display = self.display_var.get().strip() or codename
         project = self.project_var.get().strip() or None
-        style = self.style_var.get().strip() or None
+        vstyle = self.style_var.get().strip() or None
         notes = self.notes_text.get("1.0", tk.END).strip() or None
 
         if self.selected_alias is None:
@@ -136,7 +196,7 @@ class AliasTab(tk.Frame):
                 codename=codename,
                 display_name=display,
                 project_name=project,
-                visual_style=style,
+                visual_style=vstyle,
                 notes=notes,
             )
         else:
@@ -144,21 +204,25 @@ class AliasTab(tk.Frame):
             alias.codename = codename
             alias.display_name = display
             alias.project_name = project
-            alias.visual_style = style
+            alias.visual_style = vstyle
             alias.notes = notes
 
         alias_repo.save_alias(alias)
         self.selected_alias = alias
-        self._refresh_list()
+        self.refresh()
 
     def delete_alias(self) -> None:
         if not self.selected_alias:
             return
+
         alias_repo.delete_alias(self.selected_alias.codename)
+
+        # Clear UI
         self.selected_alias = None
         self.codename_var.set("")
         self.display_var.set("")
         self.project_var.set("")
         self.style_var.set("")
         self.notes_text.delete("1.0", tk.END)
-        self._refresh_list()
+
+        self.refresh()
